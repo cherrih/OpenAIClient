@@ -71,7 +71,7 @@ public struct OpenAIClient {
     }
 
     /// Use URLSession manually until swift-openapi-runtime support MultipartForm
-    public func generateAudioTransciptions(audioData: Data, fileName: String = "recording.m4a") async throws -> String {
+    public func generateAudioTransciptions(audioData: Data, fileName: String = "recording.m4a", prompt: String = "") async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/audio/transcriptions")!)
         let boundary: String = UUID().uuidString
         request.timeoutInterval = 30
@@ -82,7 +82,8 @@ public struct OpenAIClient {
         let bodyBuilder = MultipartFormDataBodyBuilder(boundary: boundary, entries: [
             .file(paramName: "file", fileName: fileName, fileData: audioData, contentType: "audio/mpeg"),
             .string(paramName: "model", value: "whisper-1"),
-            .string(paramName: "response_format", value: "text")
+            .string(paramName: "response_format", value: "text"),
+            .string(paramName: "prompt", value: prompt)
         ])
         request.httpBody = bodyBuilder.build()
         let (data, resp) = try await urlSession.data(for: request)
