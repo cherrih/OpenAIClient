@@ -26,7 +26,7 @@ public struct OpenAIClient {
             messages: [.ChatCompletionRequestAssistantMessage(.init(content: assistantPrompt, role: .assistant))]
             + prevMessages
             + [.ChatCompletionRequestUserMessage(.init(content: .case1(prompt), role: .user))],
-            model: .init(value1: nil, value2: model))))
+            model: model)))
         
         switch response {
         case .ok(let body):
