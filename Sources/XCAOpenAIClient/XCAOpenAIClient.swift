@@ -15,7 +15,20 @@ public struct OpenAIClient {
             middlewares: [AuthMiddleware(apiKey: apiKey)])
         self.apiKey = apiKey
     }
-    
+
+    public func promptChatGPT4oMini(
+        prompt: String,
+        assistantPrompt: String = "You are a helpful assistant",
+        responseFormatType: String? = nil, // Accept a string
+        prevMessages: [Components.Schemas.ChatCompletionRequestMessage] = []
+    ) async throws -> String {
+        return try await promptChatGPT(
+            prompt: prompt,
+            model: .gpt_hyphen_4o_mini,
+            assistantPrompt: assistantPrompt,
+            responseFormatType: responseFormatType,
+            prevMessages: prevMessages)
+    }
     
     public func promptChatGPT(
         prompt: String,
@@ -85,19 +98,21 @@ public struct OpenAIClient {
     }
 
     /// Use URLSession manually until swift-openapi-runtime support MultipartForm
-    public func generateAudioTransciptions(audioData: Data, fileName: String = "recording.m4a", prompt: String = "") async throws -> String {
+    public func generateAudioTransciptions(audioData: Data, fileName: String = "recording.m4a", prompt: String = "", temperature: Float = 0) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/audio/transcriptions")!)
         let boundary: String = UUID().uuidString
         request.timeoutInterval = 30
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        
+
         let bodyBuilder = MultipartFormDataBodyBuilder(boundary: boundary, entries: [
             .file(paramName: "file", fileName: fileName, fileData: audioData, contentType: "audio/mpeg"),
             .string(paramName: "model", value: "whisper-1"),
             .string(paramName: "response_format", value: "text"),
-            .string(paramName: "prompt", value: prompt)
+            .string(paramName: "prompt", value: prompt),
+            .string(paramName: "temperature", value: String(temperature)),
+            .string(paramName: "return_timestamps", value: "true")
         ])
         request.httpBody = bodyBuilder.build()
         let (data, resp) = try await urlSession.data(for: request)
