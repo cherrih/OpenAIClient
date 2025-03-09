@@ -15,7 +15,20 @@ public struct OpenAIClient {
             middlewares: [AuthMiddleware(apiKey: apiKey)])
         self.apiKey = apiKey
     }
-    
+
+    public func promptChatGPT4oMini(
+        prompt: String,
+        assistantPrompt: String = "You are a helpful assistant",
+        responseFormatType: String? = nil, // Accept a string
+        prevMessages: [Components.Schemas.ChatCompletionRequestMessage] = []
+    ) async throws -> String {
+        return try await promptChatGPT(
+            prompt: prompt,
+            model: .gpt_hyphen_4o_mini,
+            assistantPrompt: assistantPrompt,
+            responseFormatType: responseFormatType,
+            prevMessages: prevMessages)
+    }
     
     public func promptChatGPT(
         prompt: String,
