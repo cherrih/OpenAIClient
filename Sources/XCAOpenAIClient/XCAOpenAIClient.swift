@@ -24,7 +24,7 @@ public struct OpenAIClient {
     ) async throws -> String {
         return try await promptChatGPT(
             prompt: prompt,
-            model: .gpt_hyphen_4o_mini,
+            model: .gpt_hyphen_4o_hyphen_mini,
             assistantPrompt: assistantPrompt,
             responseFormatType: responseFormatType,
             prevMessages: prevMessages)
