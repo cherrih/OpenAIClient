@@ -67,10 +67,63 @@ public struct OpenAIClient {
         }
     }
 
+    public func streamingGenerateSpeechFrom(
+        input: String,
+        model: Components.Schemas.CreateSpeechRequest.modelPayload.Value2Payload = .tts_hyphen_1,
+        voice: Components.Schemas.CreateSpeechRequest.voicePayload = .fable,
+        format: Components.Schemas.CreateSpeechRequest.response_formatPayload = .aac
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        guard let url = URL(string: "https://api.openai.com/v1/audio/speech") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let jsonBody: [String: Any] = [
+            "model": model.rawValue,  // e.g. "tts-1"
+            "input": input,
+            "voice": voice.rawValue,
+            "response_format": format.rawValue,
+            "stream": true
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: jsonBody)
+
+        let (asyncBytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              200..<300 ~= httpResponse.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+        
+        // Stream chunks (1 KB at a time in this example).
+        return AsyncThrowingStream { continuation in
+            Task {
+                var buffer = Data()
+                let chunkSize = 1024
+                do {
+                    for try await byte in asyncBytes {
+                        buffer.append(byte)
+                        if buffer.count >= chunkSize {
+                            continuation.yield(buffer)
+                            buffer.removeAll(keepingCapacity: true)
+                        }
+                    }
+                    // Yield any leftover bytes
+                    if !buffer.isEmpty {
+                        continuation.yield(buffer)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
     
     public func generateSpeechFrom(input: String,
                                    model: Components.Schemas.CreateSpeechRequest.modelPayload.Value2Payload = .tts_hyphen_1,
-                                   voice: Components.Schemas.CreateSpeechRequest.voicePayload = .alloy,
+                                   voice: Components.Schemas.CreateSpeechRequest.voicePayload = .fable,
                                    format: Components.Schemas.CreateSpeechRequest.response_formatPayload = .aac
     ) async throws -> Data {
         let response = try await client.createSpeech(body: .json(
@@ -98,22 +151,26 @@ public struct OpenAIClient {
     }
 
     /// Use URLSession manually until swift-openapi-runtime support MultipartForm
-    public func generateAudioTransciptions(audioData: Data, fileName: String = "recording.m4a", prompt: String = "", temperature: Float = 0) async throws -> String {
+    public func generateAudioTransciptions(audioData: Data, fileName: String = "recording.m4a", prompt: String = "", languageCode: String? = nil) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/audio/transcriptions")!)
         let boundary: String = UUID().uuidString
         request.timeoutInterval = 30
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-
-        let bodyBuilder = MultipartFormDataBodyBuilder(boundary: boundary, entries: [
+        
+        var entries: [MultipartFormDataEntry] = [
             .file(paramName: "file", fileName: fileName, fileData: audioData, contentType: "audio/mpeg"),
-            .string(paramName: "model", value: "whisper-1"),
+            .string(paramName: "model", value: "gpt-4o-transcribe"),
             .string(paramName: "response_format", value: "text"),
-            .string(paramName: "prompt", value: prompt),
-            .string(paramName: "temperature", value: String(temperature)),
-            .string(paramName: "return_timestamps", value: "true")
-        ])
+            .string(paramName: "prompt", value: prompt)
+        ]
+        if let languageCode = languageCode, !languageCode.isEmpty {
+            entries.append(.string(paramName: "language", value: languageCode))
+        }
+
+        let bodyBuilder = MultipartFormDataBodyBuilder(boundary: boundary, entries: entries)
+
         request.httpBody = bodyBuilder.build()
         let (data, resp) = try await urlSession.data(for: request)
         guard let httpResp = resp as? HTTPURLResponse, httpResp.statusCode == 200 else {
