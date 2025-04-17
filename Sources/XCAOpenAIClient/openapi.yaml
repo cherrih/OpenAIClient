@@ -5986,6 +5986,8 @@ components:
             - type: string
               enum:
                 [
+                  "gpt-4.1",
+                  "gpt-4.1-mini",
                   "gpt-4-1106-preview",
                   "gpt-4-vision-preview",
                   "gpt-4",
@@ -7302,7 +7304,7 @@ components:
           anyOf:
             - type: string
             - type: string
-              enum: ["tts-1", "tts-1-hd"]
+              enum: ["tts-1", "tts-1-hd", "gpt-4o-mini-tts"]
           x-oaiTypeLabel: string
         input:
           type: string
@@ -7312,6 +7314,10 @@ components:
           description: The voice to use when generating the audio. Supported voices are `alloy`, `echo`, `fable`, `onyx`, `nova`, and `shimmer`.
           type: string
           enum: ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+        instructions:
+          description:
+            Optional instructions to guide the voice's style.
+          type: string
         response_format:
           description: "The format to audio in. Supported formats are `mp3`, `opus`, `aac`, and `flac`."
           default: "mp3"

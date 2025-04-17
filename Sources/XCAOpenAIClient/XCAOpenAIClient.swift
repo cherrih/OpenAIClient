@@ -15,6 +15,29 @@ public struct OpenAIClient {
             middlewares: [AuthMiddleware(apiKey: apiKey)])
         self.apiKey = apiKey
     }
+    
+    public func promptChatGPT(
+        with model: String,
+        prompt: String,
+        assistantPrompt: String = "You are a helpful assistant",
+        responseFormatType: String? = nil, 
+        prevMessages: [Components.Schemas.ChatCompletionRequestMessage] = []
+    ) async throws -> String {
+        
+        var modelPayload: Components.Schemas.CreateChatCompletionRequest.modelPayload.Value2Payload = .gpt_hyphen_4_period_1_hyphen_mini
+        if let value = Components.Schemas.CreateChatCompletionRequest.modelPayload.Value2Payload(rawValue: model) {
+            modelPayload = value
+        }
+        
+        print("RUNNING WITH MODEL \(modelPayload)")
+
+        return try await promptChatGPT(
+            prompt: prompt,
+            model: modelPayload,
+            assistantPrompt: assistantPrompt,
+            responseFormatType: responseFormatType,
+            prevMessages: prevMessages)
+    }
 
     public func promptChatGPT4oMini(
         prompt: String,
@@ -32,7 +55,7 @@ public struct OpenAIClient {
     
     public func promptChatGPT(
         prompt: String,
-        model: Components.Schemas.CreateChatCompletionRequest.modelPayload.Value2Payload = .gpt_hyphen_4o,
+        model: Components.Schemas.CreateChatCompletionRequest.modelPayload.Value2Payload = .gpt_hyphen_4_period_1,
         assistantPrompt: String = "You are a helpful assistant",
         responseFormatType: String? = nil, // Accept a string
         prevMessages: [Components.Schemas.ChatCompletionRequestMessage] = []
@@ -66,71 +89,19 @@ public struct OpenAIClient {
             throw "OpenAIClientError - statuscode: \(statusCode), \(payload)"
         }
     }
-
-    public func streamingGenerateSpeechFrom(
-        input: String,
-        model: Components.Schemas.CreateSpeechRequest.modelPayload.Value2Payload = .tts_hyphen_1,
-        voice: Components.Schemas.CreateSpeechRequest.voicePayload = .fable,
-        format: Components.Schemas.CreateSpeechRequest.response_formatPayload = .aac
-    ) async throws -> AsyncThrowingStream<Data, Error> {
-        guard let url = URL(string: "https://api.openai.com/v1/audio/speech") else {
-            throw URLError(.badURL)
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let jsonBody: [String: Any] = [
-            "model": model.rawValue,  // e.g. "tts-1"
-            "input": input,
-            "voice": voice.rawValue,
-            "response_format": format.rawValue,
-            "stream": true
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: jsonBody)
-
-        let (asyncBytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              200..<300 ~= httpResponse.statusCode else {
-            throw URLError(.badServerResponse)
-        }
-        
-        // Stream chunks (1 KB at a time in this example).
-        return AsyncThrowingStream { continuation in
-            Task {
-                var buffer = Data()
-                let chunkSize = 1024
-                do {
-                    for try await byte in asyncBytes {
-                        buffer.append(byte)
-                        if buffer.count >= chunkSize {
-                            continuation.yield(buffer)
-                            buffer.removeAll(keepingCapacity: true)
-                        }
-                    }
-                    // Yield any leftover bytes
-                    if !buffer.isEmpty {
-                        continuation.yield(buffer)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-        }
-    }
     
     public func generateSpeechFrom(input: String,
                                    model: Components.Schemas.CreateSpeechRequest.modelPayload.Value2Payload = .tts_hyphen_1,
                                    voice: Components.Schemas.CreateSpeechRequest.voicePayload = .fable,
-                                   format: Components.Schemas.CreateSpeechRequest.response_formatPayload = .aac
+                                   format: Components.Schemas.CreateSpeechRequest.response_formatPayload = .aac,
+                                   instructions: String = ""
     ) async throws -> Data {
         let response = try await client.createSpeech(body: .json(
             .init(
                 model: .init(value1: nil, value2: model),
                 input: input,
                 voice: voice,
+                instructions: instructions,
                 response_format: format
             )))
         
@@ -181,68 +152,6 @@ public struct OpenAIClient {
         }
         
         return text
-    }
-    
-    public func generateDallE3Image(prompt: String,
-                                    quality: Components.Schemas.CreateImageRequest.qualityPayload = .standard,
-                                    responseFormat: Components.Schemas.CreateImageRequest.response_formatPayload = .url,
-                                    style: Components.Schemas.CreateImageRequest.stylePayload = .vivid
-                                    
-    ) async throws -> Components.Schemas.Image {
-        
-        let response = try await client.createImage(.init(body: .json(
-            .init(
-                prompt: prompt,
-                model: .init(value1: nil, value2: .dall_hyphen_e_hyphen_3),
-                n: 1,
-                quality: quality,
-                response_format: responseFormat,
-                size: ._1024x1024,
-                style: style
-            ))))
-        
-        switch response {
-        case .ok(let response):
-            switch response.body {
-            case .json(let imageResponse) where imageResponse.data.first != nil:
-                return imageResponse.data.first!
-                
-            default:
-                throw "Unknown response"
-            }
-            
-        case .undocumented(let statusCode, let payload):
-            throw "OpenAIClientError - statuscode: \(statusCode), \(payload)"
-        }
-    }
-    
-    public func promptChatGPTVision(
-        imageData: Data,
-        detail: Components.Schemas.ChatCompletionRequestMessageContentPartImage.image_urlPayload.detailPayload = .low,
-            maxTokens: Int? = 300) async throws -> String {
-        let response = try await client.createChatCompletion(body: .json(.init(
-            messages: [
-                .ChatCompletionRequestUserMessage(.init(content: .case1("Describe this image in details, provide all visual representations, you can ignore text within the image"), role: .user)),
-                       .ChatCompletionRequestUserMessage(
-                        .init(content: .case2([.ChatCompletionRequestMessageContentPartImage(
-                            .init(_type: .image_url, image_url:
-                                    .init(url: "data:image/jpeg;base64,\(imageData.base64EncodedString())", detail: detail)))]
-                        ), role: .user))
-            ],
-            model: .init(value1: nil, value2: .gpt_hyphen_4_hyphen_vision_hyphen_preview),
-            max_tokens: maxTokens)))
-            
-        switch response {
-        case .ok(let body):
-            let json = try body.body.json
-            guard let content = json.choices.first?.message.content else {
-                throw "No Response"
-            }
-            return content
-        case .undocumented(let statusCode, let payload):
-            throw "OpenAIClientError - statuscode: \(statusCode), \(payload)"
-        }
-        
     }
     
 }
