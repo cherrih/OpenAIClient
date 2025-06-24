@@ -28,8 +28,6 @@ public struct OpenAIClient {
         if let value = Components.Schemas.CreateChatCompletionRequest.modelPayload.Value2Payload(rawValue: model) {
             modelPayload = value
         }
-        
-        print("RUNNING WITH MODEL \(modelPayload)")
 
         return try await promptChatGPT(
             prompt: prompt,
@@ -154,4 +152,56 @@ public struct OpenAIClient {
         return text
     }
     
+    public func extractTextFromImage(base64Image: String, prompt: String = "Please extract and return all visible text content from this image, without adding anything extra.") async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let requestBody: [String: Any] = [
+            "model": "gpt-4.1",
+            "messages": [
+                ["role": "user", "content": [
+                    ["type": "text", "text": prompt],
+                    ["type": "image_url", "image_url": [
+                        "url": "data:image/jpeg;base64,\(base64Image)"
+                    ]]                ]]
+            ],
+            "max_tokens": 2000
+        ]
+        
+        let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+        request.httpBody = jsonData
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            #if DEBUG
+            print("[OpenAIClient.extractTextFromImage] ❌ Invalid HTTP status code: \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+            #endif
+            throw "Invalid response from OpenAI Vision API"
+        }
+        
+        struct OpenAIResponse: Decodable {
+            struct Choice: Decodable {
+                struct Message: Decodable {
+                    let content: String
+                }
+                let message: Message
+            }
+            let choices: [Choice]
+        }
+        
+        let decodedResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
+        
+        guard let content = decodedResponse.choices.first?.message.content else {
+            #if DEBUG
+            print("[OpenAIClient.extractTextFromImage] ❌ No content found in response.")
+            #endif
+            throw "Empty response from OpenAI Vision API"
+        }
+        
+        return content
+    }
 }
+
