@@ -16,22 +16,21 @@ public struct OpenAIClient {
         self.apiKey = apiKey
     }
     
+    /// Sends a chat completion using the model name exactly as given.
+    ///
+    /// The model field is `anyOf [string, enum]`, so the raw string is passed through unchanged.
+    /// Previously any name missing from the (2024-era) enum was silently replaced with gpt-4.1-mini,
+    /// which made newer models impossible to select without regenerating the client.
     public func promptChatGPT(
         with model: String,
         prompt: String,
         assistantPrompt: String = "You are a helpful assistant",
-        responseFormatType: String? = nil, 
+        responseFormatType: String? = nil,
         prevMessages: [Components.Schemas.ChatCompletionRequestMessage] = []
     ) async throws -> String {
-        
-        var modelPayload: Components.Schemas.CreateChatCompletionRequest.modelPayload.Value2Payload = .gpt_hyphen_4_period_1_hyphen_mini
-        if let value = Components.Schemas.CreateChatCompletionRequest.modelPayload.Value2Payload(rawValue: model) {
-            modelPayload = value
-        }
-
         return try await promptChatGPT(
             prompt: prompt,
-            model: modelPayload,
+            modelPayload: .init(value1: model, value2: nil),
             assistantPrompt: assistantPrompt,
             responseFormatType: responseFormatType,
             prevMessages: prevMessages)
@@ -58,6 +57,21 @@ public struct OpenAIClient {
         responseFormatType: String? = nil, // Accept a string
         prevMessages: [Components.Schemas.ChatCompletionRequestMessage] = []
     ) async throws -> String {
+        return try await promptChatGPT(
+            prompt: prompt,
+            modelPayload: .init(value1: nil, value2: model),
+            assistantPrompt: assistantPrompt,
+            responseFormatType: responseFormatType,
+            prevMessages: prevMessages)
+    }
+
+    private func promptChatGPT(
+        prompt: String,
+        modelPayload: Components.Schemas.CreateChatCompletionRequest.modelPayload,
+        assistantPrompt: String,
+        responseFormatType: String?,
+        prevMessages: [Components.Schemas.ChatCompletionRequestMessage]
+    ) async throws -> String {
 
         // Build the response_format object if responseFormatType is provided
         var responseFormat: Components.Schemas.CreateChatCompletionRequest.response_formatPayload? = nil
@@ -65,15 +79,18 @@ public struct OpenAIClient {
             responseFormat = Components.Schemas.CreateChatCompletionRequest.response_formatPayload(_type: .init(rawValue: formatType))
         }
 
-        // Build the body for the request
+        // The instructions go in a real `system` message. They used to be sent as a prior
+        // `assistant` turn, which the model treats as something it already said rather than
+        // as instructions, so persona, language and "respond to the latest entry" rules were
+        // frequently ignored.
         let requestBody = Components.Schemas.CreateChatCompletionRequest(
-            messages: [.ChatCompletionRequestAssistantMessage(.init(content: assistantPrompt, role: .assistant))]
+            messages: [.ChatCompletionRequestSystemMessage(.init(content: assistantPrompt, role: .system))]
             + prevMessages
             + [.ChatCompletionRequestUserMessage(.init(content: .case1(prompt), role: .user))],
-            model: .init(value1: nil, value2: model),
+            model: modelPayload,
             response_format: responseFormat // Use the built response format
         )
-        
+
         let response = try await client.createChatCompletion(body: .json(requestBody))
 
         switch response {
@@ -88,8 +105,10 @@ public struct OpenAIClient {
         }
     }
     
+    /// Defaults to gpt-4o-mini-tts: it is the only listed TTS model that honors `instructions`
+    /// (tone, pacing, language). tts-1 silently ignored them.
     public func generateSpeechFrom(input: String,
-                                   model: Components.Schemas.CreateSpeechRequest.modelPayload.Value2Payload = .tts_hyphen_1,
+                                   model: Components.Schemas.CreateSpeechRequest.modelPayload.Value2Payload = .gpt_hyphen_4o_hyphen_mini_hyphen_tts,
                                    voice: Components.Schemas.CreateSpeechRequest.voicePayload = .fable,
                                    format: Components.Schemas.CreateSpeechRequest.response_formatPayload = .aac,
                                    instructions: String = ""
@@ -120,17 +139,21 @@ public struct OpenAIClient {
     }
 
     /// Use URLSession manually until swift-openapi-runtime support MultipartForm
-    public func generateAudioTransciptions(audioData: Data, fileName: String = "recording.m4a", prompt: String = "", languageCode: String? = nil) async throws -> String {
+    /// Transcribes an audio file.
+    /// - Parameters:
+    ///   - model: transcription model name, passed through as-is (e.g. "gpt-4o-transcribe", "gpt-transcribe").
+    ///   - timeoutInterval: per-request idle timeout. Uploads of ~20-minute chunks on slow links need more than the old 30 s.
+    public func generateAudioTransciptions(audioData: Data, fileName: String = "recording.m4a", prompt: String = "", languageCode: String? = nil, model: String = "gpt-4o-transcribe", timeoutInterval: TimeInterval = 120) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/audio/transcriptions")!)
         let boundary: String = UUID().uuidString
-        request.timeoutInterval = 30
+        request.timeoutInterval = timeoutInterval
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        
+
         var entries: [MultipartFormDataEntry] = [
             .file(paramName: "file", fileName: fileName, fileData: audioData, contentType: "audio/mpeg"),
-            .string(paramName: "model", value: "gpt-4o-transcribe"),
+            .string(paramName: "model", value: model),
             .string(paramName: "response_format", value: "text"),
             .string(paramName: "prompt", value: prompt)
         ]
